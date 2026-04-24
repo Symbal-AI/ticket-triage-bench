@@ -31,18 +31,18 @@ def handle_lawsuit(db: Session, event: SimEvent, sim_time) -> LawsuitResult:
     """Process lawsuit filing from security breach."""
     breach_task_id = UUID(event.payload["breach_task_id"])
     severity = event.payload["severity"]
-    
-    # Get the company from the breach task
-    task = db.query(Task).filter(Task.id == breach_task_id).one()
-    company_id = task.company_id
+
+    # Prefer event.company_id (always set); task.company_id is None for
+    # unaccepted MARKET-status CVEs.
+    company_id = event.company_id
     company = db.query(Company).filter(Company.id == company_id).one()
 
     # Calculate lawsuit cost based on severity
     lawsuit_costs = {
         "critical": 10_000_000,  # $100k
-        "high": 5_000_000,       # $50k
-        "medium": 2_000_000,     # $20k
-        "low": 500_000,          # $5k
+        "high": 5_000_000,  # $50k
+        "medium": 2_000_000,  # $20k
+        "low": 500_000,  # $5k
     }
     lawsuit_cost = lawsuit_costs.get(severity, 2_000_000)
 
