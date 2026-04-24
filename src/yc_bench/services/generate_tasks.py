@@ -7,6 +7,7 @@ from typing import Any
 from ..config.sampling import sample_from_spec
 from ..config.schema import WorldConfig
 from ..db.models.company import Domain
+from ..db.models.task import TicketType, CVESeverity
 from .rng import RngStreams, sample_without_replacement
 
 
@@ -27,6 +28,12 @@ class GeneratedTask:
     requirements: dict[str, int]
     client_index: int = 0
     required_trust: int = 0
+    ticket_type: str = "feature_request"
+    cve_severity: str | None = None
+    time_to_breach_hours: int | None = None
+    employee_index: int | None = None
+    technical_debt_delta: int = 0
+    cve_metadata: dict | None = None
 
 
 # First 10 market tasks are forced to prestige 1 to guarantee a
@@ -144,6 +151,38 @@ def _required_trust_from_reward(rng, cfg, reward_cents):
     )
 
 
+def _sample_cve_severity(rng):
+    """Sample CVE severity with distribution weighted toward less critical."""
+    weights = {
+        CVESeverity.CRITICAL: 0.05,
+        CVESeverity.HIGH: 0.15,
+        CVESeverity.MEDIUM: 0.35,
+        CVESeverity.LOW: 0.45,
+    }
+    choices = list(weights.keys())
+    probs = [weights[c] for c in choices]
+    return rng.choices(choices, weights=probs, k=1)[0]
+
+
+def _calculate_time_to_breach(severity, rng):
+    """Calculate time to breach in hours based on CVE severity."""
+    # Base time to breach (in hours) by severity
+    base_times = {
+        CVESeverity.CRITICAL: (24, 72),      # 1-3 days
+        CVESeverity.HIGH: (72, 168),         # 3-7 days
+        CVESeverity.MEDIUM: (168, 336),      # 7-14 days
+        CVESeverity.LOW: (336, 720),         # 14-30 days
+    }
+    min_hours, max_hours = base_times[severity]
+    return int(rng.uniform(min_hours, max_hours))
+
+
+def _sample_tech_debt_reduction(rng, cfg):
+    """Sample amount of technical debt reduced by cleanup task."""
+    # Tech debt cleanup tasks remove between 500-5000 units of debt
+    return int(rng.uniform(500, 5000))
+
+
 def _make_task(rng, cfg, prestige, serial, requirements, client_index=0):
     reward = _sample_reward_funds_cents(rng, cfg, prestige=prestige)
     required_trust = _required_trust_from_reward(rng, cfg, reward)
@@ -165,19 +204,97 @@ def _make_task(rng, cfg, prestige, serial, requirements, client_index=0):
         requirements=requirements,
         client_index=client_index,
         required_trust=required_trust,
+        ticket_type="feature_request",
+        technical_debt_delta=0,
+    )
+
+
+def _make_cve_ticket(rng, cfg, prestige, serial, requirements, tech_stack=None):
+    """Generate a CVE (security vulnerability) ticket."""
+    from .cve_content import build_cve_metadata
+
+    severity = _sample_cve_severity(rng)
+    time_to_breach = _calculate_time_to_breach(severity, rng)
+
+    title = f"CVE-{serial}"
+    metadata = build_cve_metadata(
+        rng,
+        cve_id=title,
+        true_severity=severity.value,
+        tech_stack=tech_stack,
+    )
+
+    # CVEs don't pay, but failing to fix them causes major problems
+    return GeneratedTask(
+        title=title,
+        required_prestige=prestige,
+        reward_funds_cents=0,
+        reward_prestige_delta=0.0,
+        skill_boost_pct=0.0,
+        status="market",
+        company_id=None,
+        accepted_at=None,
+        deadline=None,
+        completed_at=None,
+        success=None,
+        progress_milestone_pct=0,
+        requirements=requirements,
+        client_index=0,
+        required_trust=0,
+        ticket_type="cve",
+        cve_severity=severity.value,
+        time_to_breach_hours=time_to_breach,
+        technical_debt_delta=0,
+        cve_metadata=metadata,
+    )
+
+
+def _make_tech_debt_ticket(rng, cfg, prestige, serial, requirements, employee_index=0):
+    """Generate a technical debt cleanup ticket."""
+    debt_reduction = _sample_tech_debt_reduction(rng, cfg)
+    
+    # Tech debt tickets have small rewards but reduce accumulated debt
+    return GeneratedTask(
+        title=f"TechDebt-{serial}",
+        required_prestige=max(1, prestige - 1),  # Slightly lower prestige requirement
+        reward_funds_cents=0,  # No direct payment
+        reward_prestige_delta=0.1,  # Small prestige boost
+        skill_boost_pct=0.0,
+        status="market",
+        company_id=None,
+        accepted_at=None,
+        deadline=None,
+        completed_at=None,
+        success=None,
+        progress_milestone_pct=0,
+        requirements=requirements,
+        client_index=0,
+        required_trust=0,
+        ticket_type="tech_debt",
+        employee_index=employee_index,
+        technical_debt_delta=-debt_reduction,  # Negative = reduces debt
     )
 
 
 def generate_tasks(
-    *, run_seed, count, cfg, client_specialties=None, client_reward_mults=None
+    *, run_seed, count, cfg, client_specialties=None, client_reward_mults=None, num_employees=10,
+    tech_stack=None,
 ):
-    """Generate market tasks.
+    """Generate market tasks with mix of ticket types.
+
+    Generates:
+    - 60% Feature Requests (from clients)
+    - 25% Tech Debt cleanup (from employees)
+    - 15% CVEs (random security issues)
 
     Args:
         client_specialties: list of specialty domain lists, one per client index.
             e.g. [["research", "training"], ["inference"]] for 2 clients.
         client_reward_mults: list of reward multipliers per client index.
             Task rewards are scaled by the client's multiplier.
+        num_employees: number of employees for tech debt ticket assignment.
+        tech_stack: the company's tech stack dict. Passed to CVE generation so
+            rich CVE metadata can reference the company's languages/frameworks.
     """
     if count <= 0:
         return []
@@ -185,31 +302,69 @@ def generate_tasks(
     streams = RngStreams(run_seed)
     num_clients = cfg.num_clients if cfg.num_clients > 0 else 1
     out = []
+    
     for idx in range(1, count + 1):
         rng = streams.stream(f"task_{idx}")
         prestige = _sample_required_prestige(rng, cfg, index=idx - 1)
-        client_index = (idx - 1) % num_clients
-        spec_domains = (
-            client_specialties[client_index % len(client_specialties)]
-            if client_specialties
-            else None
-        )
-        requirements = _sample_requirements(
-            rng, cfg, prestige=prestige, specialty_domains=spec_domains
-        )
-        task = _make_task(
-            rng,
-            cfg,
-            prestige,
-            serial=idx,
-            requirements=requirements,
-            client_index=client_index,
-        )
-        # Apply client reward multiplier — higher-mult clients offer better-paying tasks
-        if client_reward_mults and client_index < len(client_reward_mults):
-            mult = client_reward_mults[client_index]
-            new_reward = int(task.reward_funds_cents * mult)
-            task = GeneratedTask(**{**task.__dict__, "reward_funds_cents": new_reward})
+        
+        # Determine ticket type: 60% feature, 25% tech debt, 15% CVE
+        ticket_roll = rng.random()
+        
+        if ticket_roll < 0.60:  # Feature request
+            client_index = (idx - 1) % num_clients
+            spec_domains = (
+                client_specialties[client_index % len(client_specialties)]
+                if client_specialties
+                else None
+            )
+            requirements = _sample_requirements(
+                rng, cfg, prestige=prestige, specialty_domains=spec_domains
+            )
+            task = _make_task(
+                rng,
+                cfg,
+                prestige,
+                serial=idx,
+                requirements=requirements,
+                client_index=client_index,
+            )
+            # Apply client reward multiplier
+            if client_reward_mults and client_index < len(client_reward_mults):
+                mult = client_reward_mults[client_index]
+                new_reward = int(task.reward_funds_cents * mult)
+                task = GeneratedTask(**{**task.__dict__, "reward_funds_cents": new_reward})
+                
+        elif ticket_roll < 0.85:  # Tech debt cleanup
+            requirements = _sample_requirements(
+                rng, cfg, prestige=max(1, prestige - 1), specialty_domains=None
+            )
+            employee_index = (idx - 1) % num_employees
+            task = _make_tech_debt_ticket(
+                rng,
+                cfg,
+                prestige,
+                serial=idx,
+                requirements=requirements,
+                employee_index=employee_index,
+            )
+            
+        else:  # CVE
+            # CVEs typically have smaller requirements (urgent fixes)
+            k = min(_sample_domain_count(rng, cfg), 2)  # Max 2 domains for CVEs
+            picked_domains = sample_without_replacement(rng, _ALL_DOMAINS, k)
+            requirements = {
+                domain: int(_sample_required_qty(rng, cfg) * 0.5)  # Half the size
+                for domain in picked_domains
+            }
+            task = _make_cve_ticket(
+                rng,
+                cfg,
+                prestige,
+                serial=idx,
+                requirements=requirements,
+                tech_stack=tech_stack,
+            )
+        
         out.append(task)
     return out
 
@@ -236,6 +391,11 @@ def build_task_rows(*, run_seed, count, cfg):
                 "progress_milestone_pct": task.progress_milestone_pct,
                 "client_index": task.client_index,
                 "required_trust": task.required_trust,
+                "ticket_type": task.ticket_type,
+                "cve_severity": task.cve_severity,
+                "time_to_breach_hours": task.time_to_breach_hours,
+                "employee_index": task.employee_index,
+                "technical_debt_delta": task.technical_debt_delta,
             }
         )
         for domain, qty in task.requirements.items():

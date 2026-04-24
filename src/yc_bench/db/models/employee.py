@@ -6,6 +6,7 @@ from decimal import Decimal
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    DateTime,
     Enum as SAEnum,
     ForeignKey,
     Numeric,
@@ -54,6 +55,10 @@ class Employee(Base):
     salary_cents = mapped_column(
         BigInteger,
         nullable=False,
+    )
+    contractor_until = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
 

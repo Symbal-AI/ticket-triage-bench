@@ -11,6 +11,7 @@ from sqlalchemy import (
     Enum as SAEnum,
     ForeignKey,
     Integer,
+    JSON,
     Numeric,
     String,
     Uuid,
@@ -22,6 +23,19 @@ from ..base import Base
 from .company import Domain
 
 
+class TicketType(str, Enum):
+    FEATURE_REQUEST = "feature_request"
+    TECH_DEBT = "tech_debt"
+    CVE = "cve"
+
+
+class CVESeverity(str, Enum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 class TaskStatus(str, Enum):
     MARKET = "market"
     PLANNED = "planned"
@@ -29,6 +43,7 @@ class TaskStatus(str, Enum):
     COMPLETED_SUCCESS = "completed_success"
     COMPLETED_FAIL = "completed_fail"
     CANCELLED = "cancelled"
+    SECURITY_BREACH = "security_breach"  # For CVEs that turned into breaches
 
 
 class Task(Base):
@@ -67,6 +82,11 @@ class Task(Base):
         ForeignKey("clients.id", ondelete="SET NULL"),
         nullable=True,
     )
+    employee_id = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("employees.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     status = mapped_column(
         SAEnum(
             TaskStatus,
@@ -75,6 +95,41 @@ class Task(Base):
         ),
         nullable=False,
         default=TaskStatus.MARKET,
+    )
+    ticket_type = mapped_column(
+        SAEnum(
+            TicketType,
+            name="ticket_type",
+            values_callable=lambda e: [x.value for x in e],
+        ),
+        nullable=False,
+        default=TicketType.FEATURE_REQUEST,
+    )
+    cve_severity = mapped_column(
+        SAEnum(
+            CVESeverity,
+            name="cve_severity",
+            values_callable=lambda e: [x.value for x in e],
+        ),
+        nullable=True,
+    )
+    time_to_breach_hours = mapped_column(
+        Integer,
+        nullable=True,
+    )
+    breached_at = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    cve_metadata = mapped_column(
+        JSON,
+        nullable=True,
+    )
+    technical_debt_delta = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
     )
     title = mapped_column(
         String(255),
@@ -193,4 +248,4 @@ class TaskAssignment(Base):
     )
 
 
-__all__ = ["TaskStatus", "Task", "TaskRequirement", "TaskAssignment"]
+__all__ = ["TicketType", "CVESeverity", "TaskStatus", "Task", "TaskRequirement", "TaskAssignment"]

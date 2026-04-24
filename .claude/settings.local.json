@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/pranaymanocha/Downloads/**)",
+      "Bash(python3)",
+      "Bash(uv run *)",
+      "Bash(python3 -c \"import sys, json; print\\(json.dumps\\(json.loads\\(sys.stdin.read\\(\\)\\), indent=2\\)[:1500]\\)\")",
+      "Bash(python3 -c ' *)"
+    ]
+  }
+}

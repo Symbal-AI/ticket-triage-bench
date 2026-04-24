@@ -9,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     Enum as SAEnum,
     ForeignKey,
+    JSON,
     Numeric,
     String,
     Uuid,
@@ -40,6 +41,20 @@ class Company(Base):
     funds_cents = mapped_column(
         BigInteger,
         nullable=False,
+    )
+    technical_debt = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+    )
+    security_breach_count = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+    )
+    tech_stack = mapped_column(
+        JSON,
+        nullable=True,
     )
 
 

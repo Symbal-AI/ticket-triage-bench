@@ -24,6 +24,11 @@ class EventType(str, Enum):
     PAYMENT_DISPUTE = "payment_dispute"
     BANKRUPTCY = "bankruptcy"
     HORIZON_END = "horizon_end"
+    CVE_GENERATED = "cve_generated"
+    SECURITY_BREACH = "security_breach"
+    LAWSUIT_FILED = "lawsuit_filed"
+    CONTRACT_RENEWAL_CHECK = "contract_renewal_check"
+    CONTRACT_PAYMENT = "contract_payment"
 
 
 class SimEvent(Base):

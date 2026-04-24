@@ -15,8 +15,10 @@ from ..db.models.company import Company, CompanyPrestige
 from ..db.models.employee import Employee
 from ..db.models.event import SimEvent
 from ..db.models.sim_state import SimState
-from ..db.models.task import Task, TaskAssignment, TaskRequirement, TaskStatus
+from ..db.models.task import Task, TaskAssignment, TaskRequirement, TaskStatus, TicketType
 from ..services.generate_tasks import generate_replacement_task
+from ..core.events import insert_event
+from ..db.models.event import EventType
 from . import get_db, json_output, error_output
 
 
@@ -148,6 +150,11 @@ def task_accept(
         task.company_id = company_id
         task.accepted_at = accepted_at
         task.deadline = deadline
+
+        # Note: the CVE breach event was already scheduled at world-seed time
+        # (breach_time = sim_start + time_to_breach_hours). Accepting the CVE
+        # doesn't reschedule — completing it before the scheduled breach is how
+        # the agent prevents the breach.
 
         # Generate replacement task — keyed on market_slot so every model
         # sees the same replacement for the same task, regardless of accept order.
@@ -317,6 +324,16 @@ def task_assign(
             if employee is None:
                 error_output(f"Employee '{eid_str}' not found.")
             eid = employee.id
+
+            # Reject expired contractors — their contract term is up.
+            if (
+                employee.contractor_until is not None
+                and employee.contractor_until <= sim_state.sim_time
+            ):
+                error_output(
+                    f"Employee '{eid_str}' is a contractor whose term expired on "
+                    f"{employee.contractor_until.isoformat()}."
+                )
 
             # Skip if already assigned
             existing = (
@@ -602,30 +619,41 @@ def task_inspect(
             if client_row:
                 client_name = client_row.name
 
-        json_output(
-            {
-                "task_id": task.title,
-                "title": task.title,
-                "status": task.status.value,
-                "client_name": client_name,
-                "required_prestige": task.required_prestige,
-                "required_trust": task.required_trust,
-                "reward_funds_cents": task.reward_funds_cents,
-                "reward_prestige_delta": float(task.reward_prestige_delta),
-                "skill_boost_pct": float(task.skill_boost_pct),
-                "accepted_at": (
-                    task.accepted_at.isoformat() if task.accepted_at else None
-                ),
-                "deadline": task.deadline.isoformat() if task.deadline else None,
-                "completed_at": (
-                    task.completed_at.isoformat() if task.completed_at else None
-                ),
-                "success": task.success,
-                "progress_pct": round(progress_pct, 2),
-                "requirements": requirements,
-                "assignments": assignments,
-            }
-        )
+        payload = {
+            "task_id": task.title,
+            "title": task.title,
+            "status": task.status.value,
+            "ticket_type": task.ticket_type.value,
+            "client_name": client_name,
+            "required_prestige": task.required_prestige,
+            "required_trust": task.required_trust,
+            "reward_funds_cents": task.reward_funds_cents,
+            "reward_prestige_delta": float(task.reward_prestige_delta),
+            "skill_boost_pct": float(task.skill_boost_pct),
+            "accepted_at": (
+                task.accepted_at.isoformat() if task.accepted_at else None
+            ),
+            "deadline": task.deadline.isoformat() if task.deadline else None,
+            "completed_at": (
+                task.completed_at.isoformat() if task.completed_at else None
+            ),
+            "success": task.success,
+            "progress_pct": round(progress_pct, 2),
+            "requirements": requirements,
+            "assignments": assignments,
+        }
+
+        # CVE-specific fields: always surface the rich metadata; only reveal the
+        # ground-truth severity + breach timer when the hide flag is off.
+        if task.ticket_type == TicketType.CVE:
+            hide_severity = _get_world_cfg().cve_hide_ground_truth_severity
+            if not hide_severity:
+                payload["cve_severity"] = task.cve_severity
+                payload["time_to_breach_hours"] = task.time_to_breach_hours
+            if task.cve_metadata:
+                payload["cve_metadata"] = task.cve_metadata
+
+        json_output(payload)
 
 
 @task_app.command("cancel")
@@ -702,18 +730,21 @@ def task_cancel(
         # Set status to cancelled
         task.status = TaskStatus.CANCELLED
 
-        # Drop pending events for this task
+        # Drop pending events for this task.
+        # SQLite JSON doesn't support .astext; filter in Python on the small
+        # per-company unconsumed-event set (same pattern as handlers elsewhere).
+        tid_str = str(tid)
         pending_events = (
             db.query(SimEvent)
             .filter(
                 SimEvent.company_id == sim_state.company_id,
                 SimEvent.consumed == False,
-                SimEvent.payload["task_id"].astext == str(tid),
             )
             .all()
         )
         for ev in pending_events:
-            ev.consumed = True
+            if ev.payload.get("task_id") == tid_str:
+                ev.consumed = True
 
         # Recalculate ETAs for tasks sharing freed employees
         cancelled_assignments = (

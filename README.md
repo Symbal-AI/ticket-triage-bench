@@ -1,22 +1,22 @@
-# <img src="imgs/yc_bench.png" alt="YC-Bench logo" width="40" /> YC-Bench
+# <img src="imgs/yc_bench.png" alt="YC-Bench logo" width="40" /> Ticket Triage Bench
 
 [![Website](https://img.shields.io/badge/Website-YC--Bench-E8864A)](https://collinear-ai.github.io/yc-bench/)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
-A long-horizon deterministic benchmark for LLM agents. The agent operates a simulated AI startup over a one-year horizon, starting with $200,000 in funds, interacting exclusively through a CLI against a SQLite-backed discrete-event simulation.
+A long-horizon deterministic benchmark for LLM agents managing ticket triage for a software project. The agent triages and resolves three types of tickets — client feature requests, technical debt cleanup, and security vulnerabilities (CVEs) — over a one-year horizon through a CLI interface backed by SQLite.
 
-The benchmark tests whether agents can manage compounding decisions: task selection, employee allocation, client trust, cash flow, and adversarial client detection — sustained over hundreds of turns.
+The benchmark tests whether agents can balance competing priorities: client contract renewals, accumulating technical debt, and critical security patches — sustained over hundreds of turns.
 
 <p align="center">
-  <img src="docs/static/images/system_architecture.png" alt="YC-Bench System Architecture" width="800" />
+  <img src="docs/static/images/system_architecture.png" alt="Ticket Triage Bench System Architecture" width="800" />
 </p>
 
 ## How it works
 
 ### Core loop
 
-1. Agent calls `sim resume` to advance the clock to the next event (task checkpoint, payroll, or horizon end).
+1. Agent calls `sim resume` to advance the clock to the next event (task checkpoint, payroll, security breach, contract renewal, or horizon end).
 2. The engine processes task progress, fires due events, and deducts monthly payroll.
 3. Agent receives a status summary with events since the last turn, then issues observe and act commands.
 4. Repeat until bankruptcy (funds < 0) or the one-year horizon ends.
@@ -25,33 +25,79 @@ Between time advances, the agent may issue arbitrarily many actions within a sin
 
 ### Key mechanics
 
-- **Tasks and domains**: The agent earns revenue by completing tasks from a marketplace. Each task belongs to one of four domains — `training · inference · research · data engineering` — and is issued by a client. Tasks have a reward, a deadline (activated on acceptance), and a work quantity employees must complete. Higher prestige unlocks higher-reward tasks and scales their payout. Failing a deadline incurs a 35% penalty of the reward and a prestige reduction.
-- **Employees**: A fixed roster across 3 tiers (junior/mid/senior) with per-domain productivity levels queryable via `employee list`. Productivity distributions are spiky — a senior may have high throughput in training but low in research. Successful completions grant a productivity boost in that domain but also a salary bump, so payroll grows monotonically.
-- **Clients and trust**: Completing tasks for a client builds trust, which reduces future work requirements and unlocks higher-tier tasks. However, completing for one client slightly decays trust with all others.
-- **Adversarial clients**: A subset of clients are adversarial — after acceptance, they inflate work quantities, making deadlines nearly impossible. Adversarial status is hidden. These clients offer competitively high rewards, so the agent must infer adversarial behavior from repeated failures.
-- **Memory**: Conversation history is truncated to the most recent 20 turns. The agent can write to a persistent scratchpad injected into the system prompt every turn — its sole mechanism for retaining information across context truncation.
+#### Ticket Types
+
+- **Feature Requests** (60% of tickets): From clients with strict deadlines. Success = merged PR (which adds technical debt). Failure = client tracks missed features, may not renew contract.
+- **Technical Debt Cleanup** (25% of tickets): Submitted by developers. Reduce accumulated technical debt. No direct payment but small prestige boost.
+- **CVEs** (15% of tickets): Security vulnerabilities with severity levels (CRITICAL/HIGH/MEDIUM/LOW). Have a time-to-breach countdown. If not fixed in time:
+  - Become security breaches
+  - Affect all clients (exposure count increases)
+  - May trigger lawsuits (probability based on severity)
+  - Can cause clients to not renew contracts
+
+#### Technical Debt
+
+- Every merged PR (completed feature request) adds ~10% of work quantity as technical debt
+- Accumulated technical debt slows down feature development (up to 50% slowdown at 100k debt units)
+- Tech debt cleanup tickets reduce the debt pool
+
+#### Payment Model
+
+- **Quarterly Retainers**: Clients pay retainer fees every 3 months ($40k-$75k per client based on tier)
+- **Completion Bonuses**: Feature requests pay 10% of listed value as delivery bonus
+- **Strategic Impact**: Retainers are the main revenue source; losing a contract = losing recurring revenue
+
+#### Client Contracts
+
+- Clients have 3-month contracts that come up for renewal
+- Renewal decisions based on:
+  - Failed features count (>3 failures = likely non-renewal)
+  - Security breach exposure (each breach reduces renewal chance by 15%)
+  - Overall performance score
+- Lost contracts mean losing that client's quarterly retainer payments
+
+#### Security & Lawsuits
+
+- Unpatched CVEs breach after time-to-breach expires (based on severity)
+- Security breaches have lawsuit probability:
+  - CRITICAL: 80% chance
+  - HIGH: 50% chance
+  - MEDIUM: 20% chance
+  - LOW: 5% chance
+- Lawsuit costs range from $5k (LOW) to $100k (CRITICAL)
+
+#### Employees & Domains
+
+The agent manages employees across 4 technical domains — `training · inference · research · data engineering`. Each employee has per-domain productivity levels. Successful completions grant productivity boosts and salary bumps. Payroll grows monotonically.
+
+#### Client Trust & Prestige
+
+- Completing tasks for a client builds trust, which unlocks higher-tier tasks
+- Higher prestige unlocks higher-reward tasks and scales payouts
+- Failing deadlines incurs prestige penalties
 
 ### Agent CLI
 
 All commands return JSON. The agent interacts via `run_command("yc-bench <cmd>")`.
 
-| Category | Command | Effect |
-|----------|---------|--------|
-| Observe | `company status` | Funds, prestige, payroll |
-| Observe | `employee list` | Names, tiers, salaries, productivity |
-| Observe | `market browse` | Available tasks with client, reward, domains |
-| Observe | `task list` | Accepted tasks with status and progress |
-| Observe | `task inspect --task-id T` | Per-domain progress, deadline, assignments |
-| Observe | `client list` | Client trust levels and tiers |
-| Observe | `client history` | Per-client success/failure counts |
-| Observe | `finance ledger` | Full transaction history |
-| Task | `task accept --task-id T` | Accept from market; starts deadline |
-| Task | `task assign --task-id T --employees E` | Assign employees to task |
-| Task | `task dispatch --task-id T` | Begin work on assigned task |
-| Task | `task cancel --task-id T --reason R` | Abandon task; prestige penalty |
-| Sim | `sim resume` | Advance clock to next event |
-| Memory | `scratchpad write --content C` | Overwrite persistent notes |
-| Memory | `scratchpad append --content C` | Append to persistent notes |
+| Category | Command                                 | Effect                                       |
+| -------- | --------------------------------------- | -------------------------------------------- |
+| Observe  | `company status`                        | Funds, prestige, payroll                     |
+| Observe  | `employee list`                         | Names, tiers, salaries, productivity         |
+| Observe  | `market browse`                         | Available tasks with client, reward, domains |
+| Observe  | `task list`                             | Accepted tasks with status and progress      |
+| Observe  | `task inspect --task-id T`              | Per-domain progress, deadline, assignments   |
+| Observe  | `client list`                           | Client trust levels and tiers                |
+| Observe  | `client history`                        | Per-client success/failure counts            |
+| Observe  | `client contracts`                      | Active contracts with quarterly retainers    |
+| Observe  | `finance ledger`                        | Full transaction history                     |
+| Task     | `task accept --task-id T`               | Accept from market; starts deadline          |
+| Task     | `task assign --task-id T --employees E` | Assign employees to task                     |
+| Task     | `task dispatch --task-id T`             | Begin work on assigned task                  |
+| Task     | `task cancel --task-id T --reason R`    | Abandon task; prestige penalty               |
+| Sim      | `sim resume`                            | Advance clock to next event                  |
+| Memory   | `scratchpad write --content C`          | Overwrite persistent notes                   |
+| Memory   | `scratchpad append --content C`         | Append to persistent notes                   |
 
 ---
 

@@ -6,6 +6,7 @@ import typer
 
 from ..db.models.client import Client, ClientTrust
 from ..db.models.company import CompanyPrestige, Domain
+from ..db.models.employee import Employee
 from ..db.models.sim_state import SimState
 from ..db.models.task import Task, TaskRequirement, TaskStatus
 from ..config import get_world_config
@@ -122,19 +123,44 @@ def market_browse(
                 )
                 if client_row:
                     client_name = client_row.name
+            
+            # Look up employee name for tech debt tickets
+            employee_name = None
+            if task.employee_id is not None:
+                employee_row = (
+                    db.query(Employee).filter(Employee.id == task.employee_id).one_or_none()
+                )
+                if employee_row:
+                    employee_name = employee_row.name
 
-            results.append(
-                {
-                    "task_id": task.title,
-                    "client_name": client_name,
-                    "required_prestige": task.required_prestige,
-                    "required_trust": task.required_trust,
-                    "reward_funds_cents": task.reward_funds_cents,
-                    "reward_prestige_delta": float(task.reward_prestige_delta),
-                    "skill_boost_pct": float(task.skill_boost_pct),
-                    "requirements": requirements,
-                }
-            )
+            task_info = {
+                "task_id": task.title,
+                "ticket_type": task.ticket_type.value,
+                "client_name": client_name,
+                "employee_name": employee_name,
+                "required_prestige": task.required_prestige,
+                "required_trust": task.required_trust,
+                "reward_funds_cents": task.reward_funds_cents,
+                "reward_prestige_delta": float(task.reward_prestige_delta),
+                "skill_boost_pct": float(task.skill_boost_pct),
+                "requirements": requirements,
+            }
+            
+            # Add CVE-specific fields. If the hide-severity flag is on, the
+            # agent must reason about urgency from the rich cve_metadata alone.
+            if task.ticket_type.value == "cve":
+                hide_severity = get_world_config().cve_hide_ground_truth_severity
+                if not hide_severity:
+                    task_info["cve_severity"] = task.cve_severity
+                    task_info["time_to_breach_hours"] = task.time_to_breach_hours
+                if task.cve_metadata:
+                    task_info["cve_metadata"] = task.cve_metadata
+            
+            # Add tech debt-specific fields
+            if task.ticket_type.value == "tech_debt":
+                task_info["technical_debt_delta"] = task.technical_debt_delta
+
+            results.append(task_info)
 
             if len(results) >= limit:
                 break

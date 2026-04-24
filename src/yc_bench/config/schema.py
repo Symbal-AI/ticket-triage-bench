@@ -208,6 +208,14 @@ class WorldConfig(BaseModel):
     # --- Progress milestones ---
     task_progress_milestones: list[float]
 
+    # --- CVE reasoning mode ---
+    # When True, cve_severity and time_to_breach_hours are hidden from the agent
+    # in market browse / task inspect. Agent must reason about urgency from the
+    # CVE description, CVSS-style taxonomy, and overlap with company tech stack.
+    # Environment consequences (actual breach timer, lawsuit cost) remain keyed
+    # to the true hidden severity.
+    cve_hide_ground_truth_severity: bool = False
+
     # --- Business hours ---
     workday_start_hour: int
     workday_end_hour: int

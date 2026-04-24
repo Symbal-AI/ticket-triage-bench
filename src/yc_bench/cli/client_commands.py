@@ -3,7 +3,7 @@ from __future__ import annotations
 import typer
 from sqlalchemy import func
 
-from ..db.models.client import Client, ClientTrust
+from ..db.models.client import Client, ClientTrust, ClientContract
 from ..db.models.ledger import LedgerCategory, LedgerEntry
 from ..db.models.sim_state import SimState
 from ..db.models.task import Task, TaskStatus
@@ -113,3 +113,53 @@ def client_history():
                 "client_history": results,
             }
         )
+
+
+@client_app.command("contracts")
+def client_contracts():
+    """Show active client contracts with retainer values and renewal dates."""
+    with get_db() as db:
+        sim_state = db.query(SimState).first()
+        if sim_state is None:
+            error_output("No simulation found.")
+
+        company_id = sim_state.company_id
+        
+        # Get all active contracts
+        contracts = (
+            db.query(ClientContract)
+            .join(Client, ClientContract.client_id == Client.id)
+            .filter(
+                ClientContract.company_id == company_id,
+                ClientContract.active == True,
+            )
+            .order_by(ClientContract.contract_end)
+            .all()
+        )
+
+        results = []
+        total_quarterly_revenue = 0
+        for contract in contracts:
+            client = db.query(Client).filter(Client.id == contract.client_id).one()
+            quarterly_value = contract.contract_value_cents / 100
+            total_quarterly_revenue += contract.contract_value_cents
+            
+            results.append(
+                {
+                    "client_name": client.name,
+                    "client_tier": client.tier,
+                    "quarterly_retainer_usd": f"${quarterly_value:,.2f}",
+                    "contract_start": contract.contract_start.isoformat(),
+                    "contract_end": contract.contract_end.isoformat(),
+                    "renewed": contract.renewed,
+                }
+            )
+
+        json_output(
+            {
+                "active_contracts": len(results),
+                "total_quarterly_revenue_usd": f"${total_quarterly_revenue / 100:,.2f}",
+                "contracts": results,
+            }
+        )
+

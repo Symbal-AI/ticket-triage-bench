@@ -117,11 +117,25 @@ def company_status():
             else None
         )
 
+        # CVE and security breach tracking
+        cve_count = (
+            db.query(func.count(Task.id))
+            .filter(
+                Task.company_id == company.id,
+                Task.ticket_type == "cve",
+                Task.status.in_([TaskStatus.ACTIVE, TaskStatus.PLANNED]),
+            )
+            .scalar()
+            or 0
+        )
+
         json_output(
             {
                 "company_id": str(company.id),
                 "company_name": company.name,
                 "funds_cents": company.funds_cents,
+                "technical_debt": company.technical_debt,
+                "security_breach_count": company.security_breach_count,
                 "prestige": prestige_map,
                 "sim_time": sim_state.sim_time.isoformat(),
                 "horizon_end": sim_state.horizon_end.isoformat(),
@@ -137,6 +151,28 @@ def company_status():
                 "risk": {
                     "months_runway": months_runway,
                     "bankrupt": company.funds_cents < 0,
+                    "active_cves": cve_count,
                 },
             }
         )
+
+
+@company_app.command("tech-stack")
+def company_tech_stack():
+    """Show the company's tech stack (languages, frameworks, data stores, exposed surfaces, data handled).
+
+    Referenced by CVE metadata: CVEs specify which language/framework/data-type they affect
+    so the agent can reason about whether a given vulnerability is actually relevant.
+    """
+    with get_db() as db:
+        sim_state = db.query(SimState).first()
+        if sim_state is None:
+            error_output("No simulation found. Run `yc-bench sim init` first.")
+
+        company = (
+            db.query(Company).filter(Company.id == sim_state.company_id).one_or_none()
+        )
+        if company is None:
+            error_output("Company not found.")
+
+        json_output({"company_name": company.name, "tech_stack": company.tech_stack or {}})

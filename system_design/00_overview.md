@@ -1,29 +1,41 @@
-# YC-Bench: System Overview
+# Ticket Triage Bench: System Overview
 
-## What is YC-Bench?
+## What is Ticket Triage Bench?
 
-YC-Bench is a **long-horizon deterministic benchmark for LLM agents**. It simulates an AI startup CEO managing a company over 1-3 years through a CLI-based interface against a SQLite-backed discrete-event simulation engine. The benchmark tests sustained decision-making over hundreds of turns through compounding financial, prestige, and deadline pressures.
+Ticket Triage Bench is a **long-horizon deterministic benchmark for LLM agents**. It simulates ticket triage for a software project over 1-3 years through a CLI-based interface against a SQLite-backed discrete-event simulation engine. The benchmark tests sustained decision-making over hundreds of turns through compounding technical debt, security vulnerabilities, and client contract pressures.
 
 ## Core Premise
 
-An LLM agent is dropped into the role of CEO of a small AI startup. It must:
+An LLM agent is dropped into the role of managing tickets for a software project. It must:
 
-- Browse and accept tasks from a marketplace
-- Assign employees to tasks across 4 technical domains
-- Manage cash flow (payroll, rewards, penalties)
-- Build prestige in each domain to unlock higher-tier tasks
-- Build trust with clients to unlock better payouts and reduced work requirements
+- Triage and resolve three types of tickets: Feature Requests, Technical Debt, CVEs
+- Assign employees to tickets across 4 technical domains
+- Manage cash flow (payroll, rewards, lawsuits)
+- Balance technical debt accumulation vs. cleanup
+- Patch security vulnerabilities before they breach
+- Maintain client contracts through successful feature delivery
 - Survive until the simulation horizon ends without going bankrupt
 
-## Key Metrics (~4,975 lines of Python)
+## Ticket Types
 
-| Dimension | Details |
-|-----------|---------|
-| Employees | 10 (hidden per-domain skill rates) |
-| Market Tasks | 200+ (configurable) |
-| Domains | 4: research, inference, data_environment, training |
-| Prestige Range | 1.0 - 10.0 per domain |
-| Difficulty Presets | tutorial, easy, medium, hard, nightmare |
+| Type              | Source     | Count | Key Mechanic                                   |
+| ----------------- | ---------- | ----- | ---------------------------------------------- |
+| Feature Request   | Clients    | 60%   | Strict deadlines, adds tech debt when merged   |
+| Tech Debt Cleanup | Developers | 25%   | Reduces accumulated debt, small prestige boost |
+| CVE               | Random     | 15%   | Time-to-breach countdown, may cause lawsuits   |
+
+## Key Metrics (~5,000+ lines of Python)
+
+| Dimension          | Details                                            |
+| ------------------ | -------------------------------------------------- |
+| Employees          | 10 (hidden per-domain skill rates)                 |
+| Market Tickets     | 200+ (configurable)                                |
+| Domains            | 4: research, inference, data_environment, training |
+| Prestige Range     | 1.0 - 10.0 per domain                              |
+| Ticket Types       | 3: feature_request, tech_debt, cve                 |
+| CVE Severities     | 4: critical, high, medium, low                     |
+| Contract Length    | 90 days (renewable)                                |
+| Difficulty Presets | tutorial, easy, medium, hard, nightmare            |
 
 ## High-Level Architecture
 
@@ -85,16 +97,17 @@ An LLM agent is dropped into the role of CEO of a small AI startup. It must:
 
 ## Design Documents
 
-| File | Topic |
-|------|-------|
-| [01_simulation_engine.md](01_simulation_engine.md) | Core simulation engine and event processing |
-| [02_data_models.md](02_data_models.md) | Database schema and ORM design |
-| [03_task_system.md](03_task_system.md) | Task lifecycle, ETA, and progress |
-| [04_prestige_system.md](04_prestige_system.md) | Prestige mechanics, decay, and gating |
-| [05_financial_model.md](05_financial_model.md) | Funds, payroll, ledger, and bankruptcy |
-| [06_employee_model.md](06_employee_model.md) | Employee skills, throughput, and growth |
-| [07_agent_layer.md](07_agent_layer.md) | LLM runtime, agent loop, and tools |
-| [08_cli_interface.md](08_cli_interface.md) | CLI command groups and JSON output |
-| [09_configuration.md](09_configuration.md) | Config schema, presets, and world generation |
-| [10_runner_orchestration.md](10_runner_orchestration.md) | Benchmark runner, dashboard, and session |
-| [11_client_trust.md](11_client_trust.md) | Client trust mechanics, tiers, and reward scaling |
+| File                                                     | Topic                                                     |
+| -------------------------------------------------------- | --------------------------------------------------------- |
+| [01_simulation_engine.md](01_simulation_engine.md)       | Core simulation engine and event processing               |
+| [02_data_models.md](02_data_models.md)                   | Database schema and ORM design                            |
+| [03_task_system.md](03_task_system.md)                   | Task lifecycle, ETA, and progress                         |
+| [04_prestige_system.md](04_prestige_system.md)           | Prestige mechanics, decay, and gating                     |
+| [05_financial_model.md](05_financial_model.md)           | Funds, payroll, ledger, and bankruptcy                    |
+| [06_employee_model.md](06_employee_model.md)             | Employee skills, throughput, and growth                   |
+| [07_agent_layer.md](07_agent_layer.md)                   | LLM runtime, agent loop, and tools                        |
+| [08_cli_interface.md](08_cli_interface.md)               | CLI command groups and JSON output                        |
+| [09_configuration.md](09_configuration.md)               | Config schema, presets, and world generation              |
+| [10_runner_orchestration.md](10_runner_orchestration.md) | Benchmark runner, dashboard, and session                  |
+| [11_client_trust.md](11_client_trust.md)                 | Client trust mechanics, tiers, and reward scaling         |
+| [12_ticket_triage_system.md](12_ticket_triage_system.md) | **NEW**: Ticket types, tech debt, CVEs, contract renewals |

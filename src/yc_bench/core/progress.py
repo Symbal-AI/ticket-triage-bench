@@ -254,7 +254,12 @@ def compute_task_progress_ratio(db, task_id):
     return _weighted_ratio_from_rows(reqs, task_id_label=task_id)
 
 
-def compute_effective_rates(db, company_id):
+def compute_effective_rates(db, company_id, sim_time=None):
+    """Compute effective per-domain rate for each active task.
+
+    If `sim_time` is provided, contractors whose term ends at or before
+    `sim_time` are treated as zero-rate (their contract is up).
+    """
     active_tasks = (
         db.query(Task)
         .filter(Task.company_id == company_id, Task.status == TaskStatus.ACTIVE)
@@ -296,9 +301,27 @@ def compute_effective_rates(db, company_id):
         .all()
     )
 
+    expired_contractor_ids = set()
+    if sim_time is not None:
+        from ..db.models.employee import Employee as _Employee
+
+        expired_contractor_ids = {
+            e.id
+            for e in db.query(_Employee)
+            .filter(
+                _Employee.id.in_(employee_ids),
+                _Employee.contractor_until.isnot(None),
+            )
+            .all()
+            if e.contractor_until <= sim_time
+        }
+
     base_rates = {}
     for s in skill_rows:
-        base_rates[(s.employee_id, s.domain)] = Decimal(s.rate_domain_per_hour)
+        if s.employee_id in expired_contractor_ids:
+            base_rates[(s.employee_id, s.domain)] = Decimal("0")
+        else:
+            base_rates[(s.employee_id, s.domain)] = Decimal(s.rate_domain_per_hour)
 
     out = []
     for req in requirements:
@@ -337,6 +360,11 @@ def flush_progress(db, company_id, t0, t1):
     )
     if not active_tasks:
         return
+    
+    # Get company info for technical debt penalty
+    from ..db.models.company import Company
+    company = db.query(Company).filter(Company.id == company_id).one()
+    
     task_ids = [t.id for t in active_tasks]
     req_rows = (
         db.query(TaskRequirement).filter(TaskRequirement.task_id.in_(task_ids)).all()
@@ -350,6 +378,19 @@ def flush_progress(db, company_id, t0, t1):
         .filter(EmployeeSkillRate.employee_id.in_(emp_ids))
         .all()
     )
+
+    # Contractors stop contributing once their term ends. Build a set of
+    # employees whose contractor_until falls inside the [t0, t1) window or has
+    # already expired by t1, so we can zero their rate below.
+    from ..db.models.employee import Employee as _Employee
+
+    expired_contractor_ids = {
+        e.id
+        for e in db.query(_Employee)
+        .filter(_Employee.id.in_(emp_ids), _Employee.contractor_until.isnot(None))
+        .all()
+        if e.contractor_until <= t1
+    }
 
     reqs_by_task = {}
     req_index = {}
@@ -378,14 +419,39 @@ def flush_progress(db, company_id, t0, t1):
         )
         for a in asg_rows
     ]
-    employee_rate_states = [
-        EmployeeRateState(
-            employee_id=s.employee_id,
-            domain=s.domain,
-            rate_domain_per_hour=Decimal(s.rate_domain_per_hour),
+    
+    # Apply technical debt penalty to rates for feature requests
+    # Technical debt slows down feature development by up to 50% at high levels
+    # Formula: penalty = min(0.5, technical_debt / 100000)
+    # So at 100,000 tech debt units, features take 50% longer
+    tech_debt_penalty = 1.0
+    if company.technical_debt > 0:
+        penalty_factor = min(0.5, company.technical_debt / 100000.0)
+        tech_debt_penalty = 1.0 - penalty_factor
+    
+    employee_rate_states = []
+    for s in rate_rows:
+        # Check if any of the assigned tasks for this employee are feature requests
+        employee_tasks = [a.task_id for a in asg_rows if a.employee_id == s.employee_id]
+        affected_by_tech_debt = any(
+            t.ticket_type.value == "feature_request" 
+            for t in active_tasks 
+            if t.id in employee_tasks
         )
-        for s in rate_rows
-    ]
+        
+        effective_rate = Decimal(s.rate_domain_per_hour)
+        if affected_by_tech_debt:
+            effective_rate = effective_rate * Decimal(str(tech_debt_penalty))
+        if s.employee_id in expired_contractor_ids:
+            effective_rate = Decimal("0")
+
+        employee_rate_states.append(
+            EmployeeRateState(
+                employee_id=s.employee_id,
+                domain=s.domain,
+                rate_domain_per_hour=effective_rate,
+            )
+        )
 
     updated_tasks, _, _ = apply_progress_window(
         tasks=task_states,

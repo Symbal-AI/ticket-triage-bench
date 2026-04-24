@@ -118,6 +118,13 @@ deadline_min_biz_days  = 7
 # --- Progress milestones ---
 task_progress_milestones = []
 
+# When true, cve_severity and time_to_breach_hours are hidden from the agent
+# in market browse / task inspect. The agent must reason about urgency from
+# the CVE description, CVSS-style taxonomy (cve_metadata), and overlap with
+# the company's tech stack (company tech-stack). Environment consequences
+# (breach timer, lawsuit cost) remain keyed to the true hidden severity.
+cve_hide_ground_truth_severity = false
+
 # --- Business hours ---
 workday_start_hour = 9
 workday_end_hour   = 18

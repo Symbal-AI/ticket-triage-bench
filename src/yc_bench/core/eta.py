@@ -237,8 +237,9 @@ def recalculate_etas(
 
     db.flush()
 
-    # Compute rates for all active tasks (topology-wide, since employee sharing matters)
-    rates = compute_effective_rates(db, company_id)
+    # Compute rates for all active tasks (topology-wide, since employee sharing matters).
+    # Pass sim_time so expired contractors are excluded from ETA projections.
+    rates = compute_effective_rates(db, company_id, sim_time=now)
 
     for tid in task_ids:
         task = db.query(Task).filter(Task.id == tid).one_or_none()

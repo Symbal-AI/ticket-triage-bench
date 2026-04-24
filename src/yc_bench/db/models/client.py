@@ -3,7 +3,20 @@ from __future__ import annotations
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy import CheckConstraint, Float, ForeignKey, JSON, Numeric, String, Uuid
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    JSON,
+    Numeric,
+    String,
+    Uuid,
+    text,
+)
 from sqlalchemy.orm import mapped_column
 
 from ..base import Base
@@ -41,6 +54,18 @@ class Client(Base):
         nullable=False,
         default=0.0,
     )
+    failed_features_count = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    security_breach_exposure_count = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
 
 
 class ClientTrust(Base):
@@ -71,4 +96,44 @@ class ClientTrust(Base):
     )
 
 
-__all__ = ["Client", "ClientTrust"]
+class ClientContract(Base):
+    __tablename__ = "client_contracts"
+
+    company_id = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    client_id = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    contract_start = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    contract_end = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    contract_value_cents = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+    )
+    active = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+    )
+    renewed = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
+
+__all__ = ["Client", "ClientTrust", "ClientContract"]

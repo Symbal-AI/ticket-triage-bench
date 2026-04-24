@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
 from ..config.schema import WorldConfig
-from ..db.models.client import Client, ClientTrust
+from ..db.models.client import Client, ClientTrust, ClientContract
 from ..db.models.company import Company, CompanyPrestige, Domain
 from ..db.models.employee import Employee, EmployeeSkillRate
 from ..db.models.task import Task, TaskRequirement, TaskStatus
+from ..db.models.event import EventType
+from ..core.events import insert_event
 
 from .generate_clients import generate_clients
 from .generate_employees import generate_employees
@@ -37,10 +39,20 @@ class SeedWorldResult:
 
 
 def _seed_company(db, req):
+    # Tech stack is deterministic from run_seed so CVEs can reference it.
+    from .cve_content import generate_tech_stack
+    from .rng import RngStreams
+
+    streams = RngStreams(req.run_seed)
+    tech_stack = generate_tech_stack(streams.stream("tech_stack"))
+
     company = Company(
         id=uuid4(),
         name=req.company_name,
         funds_cents=req.cfg.initial_funds_cents,
+        technical_debt=0,
+        security_breach_count=0,
+        tech_stack=tech_stack,
     )
     db.add(company)
     db.flush()
@@ -87,11 +99,13 @@ def _seed_employees(db, company, req):
 
 
 def _seed_clients(db, company, req):
-    """Create Client rows and ClientTrust rows (all starting at 0.0)."""
+    """Create Client rows, ClientTrust rows (all starting at 0.0), and initial contracts."""
     generated = generate_clients(
         run_seed=_FIXED_WORLD_SEED, count=req.cfg.num_clients, cfg=req.cfg
     )
     clients = []
+    start_date = req.start_date or datetime.now(timezone.utc)
+    
     for gc in generated:
         client = Client(
             id=uuid4(),
@@ -110,6 +124,53 @@ def _seed_clients(db, company, req):
                 trust_level=0,
             )
         )
+        
+        # Calculate contract value (3-month retainer based on tier)
+        # Base retainer: $50k/quarter, scaled by reward_multiplier
+        base_retainer = 5_000_000  # $50k in cents
+        contract_value = int(base_retainer * gc.reward_multiplier)
+        
+        # Create initial contract (3 months)
+        contract_end = start_date + timedelta(days=90)
+        db.add(
+            ClientContract(
+                company_id=company.id,
+                client_id=client.id,
+                contract_start=start_date,
+                contract_end=contract_end,
+                contract_value_cents=contract_value,
+                active=True,
+                renewed=False,
+            )
+        )
+        
+        # Schedule contract payment at start (immediate)
+        insert_event(
+            db,
+            company_id=company.id,
+            event_type=EventType.CONTRACT_PAYMENT,
+            scheduled_at=start_date,
+            payload={
+                "client_id": str(client.id),
+                "company_id": str(company.id),
+            },
+            dedupe_key=f"contract_payment_{company.id}_{client.id}_0",
+        )
+        
+        # Schedule contract renewal check event
+        insert_event(
+            db,
+            company_id=company.id,
+            event_type=EventType.CONTRACT_RENEWAL_CHECK,
+            scheduled_at=contract_end,
+            payload={
+                "client_id": str(client.id),
+                "company_id": str(company.id),
+                "rng_seed": req.run_seed + hash(str(client.id)) % 1000000,
+            },
+            dedupe_key=f"contract_renewal_{company.id}_{client.id}_0",
+        )
+        
     db.flush()
     return clients
 
@@ -126,14 +187,32 @@ def _seed_market_tasks(db, company, req, clients):
         cfg=req.cfg,
         client_specialties=client_specialties,
         client_reward_mults=client_reward_mults,
+        tech_stack=company.tech_stack,
     )
     for slot_idx, task in enumerate(generated):
-        client = clients[task.client_index % len(clients)] if clients else None
+        # Map client_index to actual client for feature requests
+        client = None
+        if task.ticket_type == "feature_request" and clients:
+            client = clients[task.client_index % len(clients)]
+        
+        # Map employee_index to actual employee for tech debt tickets
+        employee_id = None
+        if task.ticket_type == "tech_debt":
+            employees = db.query(Employee).filter(Employee.company_id == company.id).all()
+            if employees and task.employee_index is not None:
+                employee_id = employees[task.employee_index % len(employees)].id
+        
         task_row = Task(
             id=uuid4(),
             company_id=None,
             client_id=client.id if client else None,
+            employee_id=employee_id,
             status=TaskStatus.MARKET,
+            ticket_type=task.ticket_type,
+            cve_severity=task.cve_severity,
+            time_to_breach_hours=task.time_to_breach_hours,
+            technical_debt_delta=task.technical_debt_delta,
+            cve_metadata=task.cve_metadata,
             title=task.title,
             required_prestige=task.required_prestige,
             reward_funds_cents=task.reward_funds_cents,
@@ -157,6 +236,25 @@ def _seed_market_tasks(db, company, req, clients):
                     required_qty=qty,
                     completed_qty=0,
                 )
+            )
+
+        # Schedule the CVE's breach timer at world-seed time, not at accept time.
+        # Real CVEs are a risk whether you triage them or not — ignoring a
+        # vulnerability in the market still exposes the company. Accepting and
+        # completing the CVE before breach_time is how you PREVENT the breach.
+        if task.ticket_type == "cve" and task.time_to_breach_hours:
+            start = req.start_date or datetime.now(timezone.utc)
+            breach_time = start + timedelta(hours=task.time_to_breach_hours)
+            insert_event(
+                db,
+                company_id=company.id,
+                event_type=EventType.SECURITY_BREACH,
+                scheduled_at=breach_time,
+                payload={
+                    "task_id": str(task_row.id),
+                    "rng_seed": req.run_seed + task.time_to_breach_hours,
+                },
+                dedupe_key=f"breach_{task_row.id}",
             )
 
 

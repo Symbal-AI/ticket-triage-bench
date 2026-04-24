@@ -162,6 +162,8 @@ def dispatch_event(
             "task_title": task_title,
             "client_name": client_name,
             "success": result.success,
+            "grade": result.grade,
+            "reward_multiplier": result.reward_multiplier,
             "funds_delta": result.funds_delta,
             "listed_reward": result.listed_reward,
             "trust_delta": result.trust_delta,
@@ -178,6 +180,52 @@ def dispatch_event(
     elif event.event_type == EventType.BANKRUPTCY:
         result = handle_bankruptcy(db, event)
         return {"type": "bankruptcy", "bankrupt": result.bankrupt}
+
+    elif event.event_type == EventType.SECURITY_BREACH:
+        from .handlers.security_breach import handle_security_breach
+        result = handle_security_breach(db, event, sim_time)
+        return {
+            "type": "security_breach",
+            "task_id": str(result.task_id),
+            "cve_severity": result.cve_severity,
+            "affected_clients": result.affected_clients,
+            "lawsuit_scheduled": result.lawsuit_scheduled,
+        }
+
+    elif event.event_type == EventType.LAWSUIT_FILED:
+        from .handlers.lawsuit import handle_lawsuit
+        result = handle_lawsuit(db, event, sim_time)
+        return {
+            "type": "lawsuit_filed",
+            "breach_task_id": str(result.breach_task_id),
+            "severity": result.severity,
+            "lawsuit_cost": result.lawsuit_cost,
+            "bankrupt": result.bankrupt,
+        }
+
+    elif event.event_type == EventType.CONTRACT_RENEWAL_CHECK:
+        from .handlers.contract_renewal import handle_contract_renewal
+        result = handle_contract_renewal(db, event, sim_time)
+        return {
+            "type": "contract_renewal",
+            "client_id": str(result.client_id),
+            "client_name": result.client_name,
+            "renewed": result.renewed,
+            "failed_features": result.failed_features,
+            "security_exposures": result.security_exposures,
+            "reason": result.reason,
+        }
+
+    elif event.event_type == EventType.CONTRACT_PAYMENT:
+        from .handlers.contract_payment import handle_contract_payment
+        result = handle_contract_payment(db, event, sim_time)
+        return {
+            "type": "contract_payment",
+            "client_id": str(result.client_id),
+            "client_name": result.client_name,
+            "contract_value": result.contract_value,
+            "active_contracts": result.active_contracts,
+        }
 
     return {"type": "unknown", "event_type": event.event_type.value}
 

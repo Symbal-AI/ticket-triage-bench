@@ -15,6 +15,9 @@ class LedgerCategory(str, Enum):
     TASK_FAIL_PENALTY = "task_fail_penalty"
     TASK_CANCEL_PENALTY = "task_cancel_penalty"
     PAYMENT_DISPUTE = "payment_dispute"
+    LAWSUIT = "lawsuit"
+    CONTRACT_PAYMENT = "contract_payment"
+    CONTRACTOR_COST = "contractor_cost"
 
 
 class LedgerEntry(Base):
